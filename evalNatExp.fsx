@@ -125,26 +125,27 @@ let rec derive judge =
         )
     | _ -> failwith "cannot derive"
 
-let nat = production "nat"
-nat.rule
-    <- ~~"Z" --> fun _ -> Z
-    |- ~~"S(" +. nat .+ ~~")" --> S
-let term = production "term"
-let primary = production "primary"
-primary.rule
-    <- primary .+ ~~" * " + term --> Mul
-    |- term
-let expr = production "expr"
-expr.rule
-    <- expr .+ ~~" + " + primary --> Add
-    |- primary
-term.rule
-    <- nat --> Term
-    |- ~~"(" +. expr .+ ~~")"
-let peval = expr .+ ~~" evalto " + nat --> Eval
+module Parser =
+    let nat = production "nat"
+    nat.rule
+        <- ~~"Z" --> fun _ -> Z
+        |- ~~"S(" +. nat .+ ~~")" --> S
+    let term = production "term"
+    let primary = production "primary"
+    primary.rule
+        <- primary .+ ~~" * " + term --> Mul
+        |- term
+    let expr = production "expr"
+    expr.rule
+        <- expr .+ ~~" + " + primary --> Add
+        |- primary
+    term.rule
+        <- nat --> Term
+        |- ~~"(" +. expr .+ ~~")"
+    let eval = expr .+ ~~" evalto " + nat --> Eval
 
 "Z * (S(S(Z)) + S(S(Z))) evalto Z"
-|> parse peval
+|> parse Parser.eval
 |> function
     | Success s -> s.Value
     | Failure e -> failwith (sprintf "%A" e)
