@@ -45,6 +45,8 @@ type Value =
 type Judge =
     (* e evalto v *)
     | Eval of Expr * Value
+    (* e evalto error *)
+    | EvalErr of Expr
     (* i1 plus i2 is i3 *)
     | Plus of int * int * int
     (* i1 minus i2 is i3 *)
@@ -57,6 +59,7 @@ type Judge =
         override this.ToString() =
             match this with
             | Eval(e, v) -> $"{e} evalto {v}"
+            | EvalErr e -> $"{e} evalto error"
             | Plus(i1, i2, i3) -> $"{i1} plus {i2} is {i3}"
             | Minus(i1, i2, i3) -> $"{i1} minus {i2} is {i3}"
             | Times(i1, i2, i3) -> $"{i1} times {i2} is {i3}"
@@ -89,6 +92,26 @@ type Rule =
     | BTimes
     (* i1 less than i2 is b3 *)
     | BLt
+    | EPlusBoolL of Derivation
+    | EPlusBoolR of Derivation
+    | EPlusErrorL of Derivation
+    | EPlusErrorR of Derivation
+    | EMinusBoolL of Derivation
+    | EMinusBoolR of Derivation
+    | EMinusErrorL of Derivation
+    | EMinusErrorR of Derivation
+    | ETimesBoolL of Derivation
+    | ETimesBoolR of Derivation
+    | ETimesErrorL of Derivation
+    | ETimesErrorR of Derivation
+    | ELTBoolL of Derivation
+    | ELTBoolR of Derivation
+    | ELTErrorL of Derivation
+    | ELTErrorR of Derivation
+    | EIfInt of Derivation
+    | EIfError of Derivation
+    | EIfTError of Derivation * Derivation
+    | EIfFError of Derivation * Derivation
 and Derivation = Judge * Rule
 module Rule =
     let mapRule = function
@@ -104,6 +127,26 @@ module Rule =
         | BMinus -> "B-Minus", []
         | BTimes -> "B-Times", []
         | BLt -> "B-Lt", []
+        | EPlusBoolL d -> "E-PlusBoolL", [d] 
+        | EPlusBoolR d -> "E-PlusBoolR", [d] 
+        | EPlusErrorL d -> "E-PlusErrorL", [d] 
+        | EPlusErrorR d -> "E-PlusErrorR", [d] 
+        | EMinusBoolL d -> "E-MinusBoolL", [d]
+        | EMinusBoolR d -> "E-MinusBoolR", [d]
+        | EMinusErrorL d -> "E-MinusErrorL", [d]
+        | EMinusErrorR d -> "E-MinusErrorR", [d]
+        | ETimesBoolL d -> "E-TimesBoolL", [d]
+        | ETimesBoolR d -> "E-TimesBoolR", [d]
+        | ETimesErrorL d -> "E-TimesErrorL", [d]
+        | ETimesErrorR d -> "E-TimesErrorR", [d]
+        | ELTBoolL d -> "E-LtBoolL", [d]
+        | ELTBoolR d -> "E-LtBoolR", [d]
+        | ELTErrorL d -> "E-LtErrorL", [d]
+        | ELTErrorR d -> "E-LtErrorR", [d]
+        | EIfInt d -> "E-IfInt", [d]
+        | EIfError d -> "E-IfError", [d]
+        | EIfTError(d1, d2) -> "E-IfTError", [d1; d2]
+        | EIfFError(d1, d2) -> "E-IfFError", [d1; d2]
 
 let printDerivation printJudge mapRule =
     let rec deriv level (judge, by) =
@@ -117,89 +160,100 @@ let printDerivation printJudge mapRule =
     fun derivation -> deriv 0 derivation
 
 let rec eval = function
-    | Expr.Int i -> Value.Int i
-    | Expr.Bool b -> Value.Bool b
+    | Expr.Int i -> Some <| Value.Int i
+    | Expr.Bool b -> Some <| Value.Bool b
     | Expr.Plus(e1, e2) ->
         match (eval e1, eval e2) with
-        | (Value.Int i1, Value.Int i2) -> Value.Int(i1 + i2)
-        | _ -> failwith "invalid type"
+        | (Some(Value.Int i1), Some(Value.Int i2)) -> Some <| Value.Int(i1 + i2)
+        | _ -> None
     | Expr.Minus(e1, e2) ->
         match (eval e1, eval e2) with
-        | (Value.Int i1, Value.Int i2) -> Value.Int(i1 - i2)
-        | _ -> failwith "invalid type"
+        | (Some(Value.Int i1), Some(Value.Int i2)) -> Some <| Value.Int(i1 - i2)
+        | _ -> None
     | Expr.Times(e1, e2) ->
         match (eval e1, eval e2) with
-        | (Value.Int i1, Value.Int i2) -> Value.Int(i1 * i2)
-        | _ -> failwith "invalid type"
+        | (Some(Value.Int i1), Some(Value.Int i2)) -> Some <| Value.Int(i1 * i2)
+        | _ -> None
     | Expr.LT(e1, e2) ->
         match (eval e1, eval e2) with
-        | (Value.Int i1, Value.Int i2) -> Value.Bool(i1 < i2)
-        | _ -> failwith "invalid type"
+        | (Some(Value.Int i1), Some(Value.Int i2)) -> Some <| Value.Bool(i1 < i2)
+        | _ -> None
     | Expr.If(e, et, ef) ->
         match (eval e) with
-        | Value.Bool true -> eval et
-        | Value.Bool false -> eval ef
-        | _ -> failwith "invalid type"
+        | Some(Value.Bool true) -> eval et
+        | Some(Value.Bool false) -> eval ef
+        | _ -> None
 
 
 let rec derive judge =
     let conclude by = (judge, by)
+
+    let deriveBinOp rule judge e1 e2 r =
+        match (eval e1, eval e2) with
+        | (Some((Value.Int i1) as v1), Some((Value.Int i2) as v2)) ->
+            conclude <| rule(
+                derive <| Judge.Eval(e1, v1),
+                derive <| Judge.Eval(e2, v2),
+                derive <| judge(i1, i2, r)
+            )
+        | _ -> failwith "invalid type"
+
+    let deriveEvalErr eboolL eboolR eerrorL eerrorR e1 e2 =
+        match (eval e1, eval e2) with
+        | (Some(Value.Bool _ as b), _) -> conclude <| eboolL(derive <| Judge.Eval(e1, b))
+        | (_, Some(Value.Bool _ as b)) -> conclude <| eboolR(derive <| Judge.Eval(e2, b))
+        | (None, _) -> conclude <| eerrorL(derive <| Judge.EvalErr(e1))
+        | (_, None) -> conclude <| eerrorR(derive <| Judge.EvalErr(e2))
+        | (Some(Value.Int _), Some(Value.Int _)) -> failwith "valid...?"
+
     match judge with
     | Eval(Expr.Int(i), Value.Int(i')) when i = i' -> conclude EInt
     | Eval(Expr.Bool(b), Value.Bool(b')) when b = b' -> conclude EBool
     | Eval(Expr.If(e, et, ef), v) ->
         match (eval e) with
-        | Value.Bool true ->
+        | Some(Value.Bool true) ->
             conclude <| Rule.EIfT(
                 derive <| Judge.Eval(e, Value.Bool true),
                 derive <| Judge.Eval(et, v)
             )
-        | Value.Bool false ->
+        | Some(Value.Bool false) ->
             conclude <| Rule.EIfF(
                 derive <| Judge.Eval(e, Value.Bool false),
                 derive <| Judge.Eval(ef, v)
             )
         | _ -> failwith "invalid type"
+    | EvalErr(Expr.If(e, et, ef)) ->
+        match (eval e) with
+        | Some((Value.Int _ as i)) ->
+            conclude <| Rule.EIfInt(derive <| Judge.Eval(e, i))
+        | None ->
+            conclude <| Rule.EIfError(derive <| Judge.EvalErr(e))
+        | Some(Value.Bool true) ->
+            conclude <| Rule.EIfTError(
+                derive <| Judge.Eval(e, Value.Bool true),
+                derive <| Judge.EvalErr(et)
+            )
+        | Some(Value.Bool false) ->
+            conclude <| Rule.EIfFError(
+                derive <| Judge.Eval(e, Value.Bool false),
+                derive <| Judge.EvalErr(ef)
+            )
     | Eval(Expr.Plus(e1, e2), Value.Int(i3)) ->
-        let (v1, v2) = (eval e1, eval e2)
-        match (v1, v2) with
-        | (Value.Int i1, Value.Int i2) ->
-            conclude <| Rule.EPlus(
-                derive <| Judge.Eval(e1, v1),
-                derive <| Judge.Eval(e2, v2),
-                derive <| Judge.Plus(i1, i2, i3)
-            )
-        | _ -> failwith "invalid type"
+        deriveBinOp Rule.EPlus Judge.Plus e1 e2 i3
+    | EvalErr(Expr.Plus(e1, e2)) ->
+        deriveEvalErr Rule.EPlusBoolL Rule.EPlusBoolR Rule.EPlusErrorL Rule.EPlusErrorR e1 e2
     | Eval(Expr.Minus(e1, e2), Value.Int(i3)) ->
-        let (v1, v2) = (eval e1, eval e2)
-        match (v1, v2) with
-        | (Value.Int i1, Value.Int i2) ->
-            conclude <| Rule.EMinus(
-                derive <| Judge.Eval(e1, v1),
-                derive <| Judge.Eval(e2, v2),
-                derive <| Judge.Minus(i1, i2, i3)
-            )
-        | _ -> failwith "invalid type"
+        deriveBinOp Rule.EMinus Judge.Minus e1 e2 i3
+    | EvalErr(Expr.Minus(e1, e2)) ->
+        deriveEvalErr Rule.EMinusBoolL Rule.EMinusBoolR Rule.EMinusErrorL Rule.EMinusErrorR e1 e2
     | Eval(Expr.Times(e1, e2), Value.Int(i3)) ->
-        let (v1, v2) = (eval e1, eval e2)
-        match (v1, v2) with
-        | (Value.Int i1, Value.Int i2) ->
-            conclude <| Rule.ETimes(
-                derive <| Judge.Eval(e1, v1),
-                derive <| Judge.Eval(e2, v2),
-                derive <| Judge.Times(i1, i2, i3)
-            )
-        | _ -> failwith "invalid type"
+        deriveBinOp Rule.ETimes Judge.Times e1 e2 i3
+    | EvalErr(Expr.Times(e1, e2)) ->
+        deriveEvalErr Rule.ETimesBoolL Rule.ETimesBoolR Rule.ETimesErrorL Rule.ETimesErrorR e1 e2
     | Eval(Expr.LT(e1, e2), Value.Bool(b3)) ->
-        let (v1, v2) = (eval e1, eval e2)
-        match (v1, v2) with
-        | (Value.Int i1, Value.Int i2) ->
-            conclude <| Rule.ELt(
-                derive <| Judge.Eval(e1, v1),
-                derive <| Judge.Eval(e2, v2),
-                derive <| Judge.Lt(i1, i2, b3)
-            )
-        | _ -> failwith "invalid type"
+        deriveBinOp Rule.ELt Judge.Lt e1 e2 b3
+    | EvalErr(Expr.LT(e1, e2)) ->
+        deriveEvalErr Rule.ELTBoolL Rule.ELTBoolR Rule.ELTErrorL Rule.ELTErrorR e1 e2 
     | Plus (i1, i2, i3) when i3 = i1 + i2 -> conclude <| Rule.BPlus
     | Minus(i1, i2, i3) when i3 = i1 - i2 -> conclude <| Rule.BMinus
     | Times(i1, i2, i3) when i3 = i1 * i2 -> conclude <| Rule.BTimes
@@ -245,9 +299,9 @@ module Parser =
     
     let value = (digits --> Value.Int) |- (bool --> Value.Bool)
 
-    let eval = expr .+ ~~" evalto " + value --> Judge.Eval
+    let eval = (expr .+ ~~" evalto " + value --> Judge.Eval) |- (expr .+ ~~" evalto error" --> Judge.EvalErr)
 
-"3 + (if -23 < -2 * 8 then 8 else 2) + 4 evalto 15"
+"if 3 < 4 then 1 < true else 3 - false evalto error"
 |> parse Parser.eval
 |> function
     | Success s -> s.Value
